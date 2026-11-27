@@ -1,0 +1,740 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Крокодил — рисуем и угадываем</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;700;800&family=Caveat:wght@700&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js"></script>
+<script>window.mqtt||document.write('<script src="https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js"><\/script>')</script>
+<style>
+/* VOICE: весёлая вечеринка с друзьями, но аккуратно
+   IDEA: альбом для рисования на зелёной крокодиловой обложке
+   PICTURE: белый лист-холст — главный герой экрана
+   COLOUR and TYPE: крокодилово-зелёный, белая бумага, жёлтый акцент; Rubik + Caveat
+   LAYOUT: холст слева, игроки и чат справа; на телефоне — столбиком */
+:root{color-scheme:light dark;
+  --bg:light-dark(#1f7a4d,#0c2e1f);--bg2:light-dark(#18663f,#0a2519);
+  --card:light-dark(#ffffff,#132a1e);--ink:light-dark(#13251a,#e7f3ec);
+  --mute:light-dark(#5d7266,#98b3a4);--line:light-dark(#dce6e0,#244233);
+  --acc:#ffd23f;--accInk:#2b2100;--ok:#1f9d55;--bad:#e5484d;--soft:light-dark(#f2f7f4,#183526)}
+*{box-sizing:border-box;min-width:0}
+html,body{margin:0}
+body{min-height:100vh;background:var(--bg);color:var(--ink);font:16px/1.5 Rubik,system-ui,sans-serif;overflow-x:clip;
+  background-image:radial-gradient(circle at 20% 0,rgba(255,255,255,.08),transparent 40%),radial-gradient(rgba(0,0,0,.08) 2px,transparent 2.5px);background-size:auto,22px 22px}
+button,input,select{font:inherit}
+button{cursor:pointer;border:0;border-radius:12px;min-height:44px;padding:0 18px;font-weight:700;background:var(--acc);color:var(--accInk);transition:transform .1s}
+button:active{transform:scale(.97)}
+button:disabled{opacity:.45;cursor:not-allowed}
+button.ghost{background:var(--soft);color:var(--ink);font-weight:500}
+:focus-visible{outline:3px solid var(--acc);outline-offset:2px}
+input,select{min-height:44px;font-size:16px;border:2px solid var(--line);border-radius:12px;padding:0 14px;background:var(--card);color:var(--ink);width:100%}
+.hidden{display:none!important}
+.wrap{max-width:1240px;margin:0 auto;padding:14px max(3vw,12px) 28px}
+header{display:flex;align-items:center;gap:12px;color:#fff;padding:2px 0 12px}
+.logo{font:700 42px/1 Caveat,cursive;letter-spacing:.5px}
+header .room{margin-left:auto;font-size:14px;opacity:.85}
+
+/* home */
+.home{display:grid;place-items:center;min-height:calc(100vh - 100px)}
+.hcard{background:var(--card);border-radius:24px;padding:clamp(22px,4vw,40px);width:min(460px,100%);box-shadow:0 20px 50px rgba(0,0,0,.25);text-align:center}
+.hcard h1{font:700 58px/1 Caveat,cursive;margin:8px 0 6px}
+.hcard p{color:var(--mute);margin:0 0 20px}
+.hcard form{display:grid;gap:12px;text-align:left}
+.hcard label{font-weight:500;font-size:14px;display:grid;gap:6px}
+#hmsg{min-height:24px;color:var(--bad);font-size:14px;margin:0;text-align:center}
+
+/* game */
+.game{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:16px;align-items:start}
+.stage{background:var(--card);border-radius:20px;padding:12px;box-shadow:0 16px 40px rgba(0,0,0,.22)}
+.top{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:2px 4px 10px;min-height:56px}
+.hint{font-size:26px;font-weight:800;letter-spacing:.18em;white-space:pre-wrap;flex:1}
+.hint small{display:block;font-size:13px;letter-spacing:0;font-weight:500;color:var(--mute)}
+.hint b{color:var(--ok)}
+.timer{width:52px;height:52px;border-radius:50%;display:grid;place-items:center;font-weight:800;font-size:18px;
+  background:conic-gradient(var(--acc) calc(var(--p,1)*360deg),var(--soft) 0);position:relative}
+.timer::after{content:"";position:absolute;inset:5px;border-radius:50%;background:var(--card)}
+.timer span{position:relative;z-index:1}
+.timer.low{background:conic-gradient(var(--bad) calc(var(--p,1)*360deg),var(--soft) 0)}
+.board{position:relative;aspect-ratio:4/3;border-radius:14px;overflow:hidden;background:#fff;box-shadow:inset 0 0 0 2px var(--line)}
+#cv{position:absolute;inset:0;width:100%;height:100%;touch-action:none;display:block}
+#cv.drawing{cursor:crosshair}
+.over{position:absolute;inset:0;display:grid;place-items:center;padding:16px;background:rgba(19,37,26,.55);backdrop-filter:blur(3px);overflow:auto}
+.panel{background:var(--card);color:var(--ink);border-radius:18px;padding:clamp(16px,3vw,28px);width:min(520px,100%);box-shadow:0 10px 30px rgba(0,0,0,.3)}
+.panel h2{margin:0 0 6px;font-size:26px;line-height:1.1}
+.panel p{margin:0 0 14px;color:var(--mute)}
+.linkrow{display:flex;gap:8px;margin-bottom:16px}
+.linkrow input{font-size:14px}
+.opts{display:grid;gap:10px;margin-bottom:16px}
+.chk{display:flex;align-items:center;gap:10px;min-height:44px;padding:0 12px;border-radius:12px;background:var(--soft);cursor:pointer}
+.chk input{width:20px;height:20px;min-height:0;accent-color:var(--ok)}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.row2 label{font-size:14px;display:grid;gap:4px;color:var(--mute)}
+.big{width:100%;min-height:52px;font-size:18px}
+.revealw{font:700 46px/1.05 Caveat,cursive;color:var(--ink);margin:4px 0 10px}
+.tools{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding-top:10px}
+.sw{width:36px;height:36px;min-height:36px;padding:0;border-radius:50%;box-shadow:inset 0 0 0 2px rgba(0,0,0,.15)}
+.sw.on{outline:3px solid var(--ink);outline-offset:2px}
+.sz{width:44px;padding:0;background:var(--soft);display:grid;place-items:center}
+.sz i{display:block;border-radius:50%;background:var(--ink)}
+.sz.on,.tl.on{background:var(--acc);color:var(--accInk)}
+.sz.on i{background:var(--accInk)}
+.tl{background:var(--soft);color:var(--ink);font-weight:500;padding:0 12px}
+.sep{width:1px;height:28px;background:var(--line)}
+
+.side{display:grid;gap:16px}
+.box{background:var(--card);border-radius:20px;padding:14px;box-shadow:0 16px 40px rgba(0,0,0,.18)}
+.box h3{margin:0 0 8px;font-size:15px;color:var(--mute);font-weight:500}
+.pl{list-style:none;margin:0;padding:0;display:grid;gap:4px}
+.pl li{display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:10px}
+.pl li.me{background:var(--soft)}
+.pl li.got{background:light-dark(#dff5e8,#163f2a)}
+.pl .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pl .sc{font-weight:800;font-variant-numeric:tabular-nums}
+.tag{font-size:12px;padding:1px 8px;border-radius:99px;background:var(--acc);color:var(--accInk);font-weight:700;white-space:nowrap}
+.tag.g{background:var(--ok);color:#fff}
+.chat{display:flex;flex-direction:column;height:340px}
+#log{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:3px;padding-right:4px;font-size:15px}
+#log div{padding:3px 8px;border-radius:8px;overflow-wrap:anywhere}
+#log b{font-weight:700}
+#log .sys{color:var(--mute);font-size:13px}
+#log .ok{background:light-dark(#dff5e8,#163f2a);color:light-dark(#0f5c31,#9fe3bb);font-weight:700}
+#log .close{background:light-dark(#fff3c4,#3d3510);color:light-dark(#6b5200,#ffe58a)}
+#log .secret{color:var(--ok)}
+#gf{display:flex;gap:8px;margin-top:8px}
+#gf button{padding:0 14px}
+.status{color:#fff;font-size:14px;min-height:20px;margin-top:10px;opacity:.9}
+@keyframes pop{0%{box-shadow:0 0 0 0 rgba(255,210,63,.9)}100%{box-shadow:0 0 0 24px rgba(255,210,63,0)}}
+.yay{animation:pop .7s ease-out}
+@media (prefers-reduced-motion:reduce){.yay{animation:none}button{transition:none}}
+@media(max-width:860px){.game{grid-template-columns:minmax(0,1fr)}.chat{height:280px}.side{grid-template-columns:minmax(0,1fr)}}
+@media(max-width:600px){.hint{font-size:21px;letter-spacing:.12em}.logo{font-size:34px}.row2{grid-template-columns:1fr}.stage{padding:8px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header><div class="logo">Крокодил</div><div class="room" id="roomTag"></div></header>
+
+  <section id="home" class="home">
+    <div class="hcard">
+      <svg viewBox="0 0 220 110" width="220" height="110" aria-hidden="true">
+        <ellipse cx="110" cy="96" rx="90" ry="8" fill="#000" opacity=".08"/>
+        <path d="M20 70 Q30 40 75 42 L180 50 Q205 52 205 64 Q205 74 180 76 L80 84 Q30 88 20 70Z" fill="#2f9a5f"/>
+        <path d="M80 76 L180 70 Q200 70 204 64 Q205 76 180 78 L80 86Z" fill="#1d7445"/>
+        <path d="M95 66 l6 8 6-8 6 8 6-8 6 8 6-8 6 8 6-8 6 8 6-8 6 8 6-8" fill="none" stroke="#fff" stroke-width="3" stroke-linejoin="round"/>
+        <circle cx="70" cy="44" r="13" fill="#2f9a5f"/><circle cx="70" cy="42" r="8" fill="#fff"/><circle cx="72" cy="42" r="4" fill="#13251a"/>
+        <circle cx="45" cy="56" r="3" fill="#1d7445"/><circle cx="55" cy="62" r="3" fill="#1d7445"/>
+        <g transform="rotate(-35 170 30)"><rect x="140" y="24" width="60" height="12" rx="3" fill="#ffd23f"/><path d="M200 24 l14 6 -14 6z" fill="#f4c99a"/><path d="M209 28 l5 2 -5 2z" fill="#13251a"/><rect x="134" y="24" width="8" height="12" rx="2" fill="#e5484d"/></g>
+      </svg>
+      <h1>Крокодил</h1>
+      <p id="hsub">Один рисует, остальные угадывают. Создай комнату и кинь ссылку друзьям.</p>
+      <form id="hf">
+        <label>Как тебя зовут?<input id="nm" maxlength="20" autocomplete="nickname" placeholder="Например, Аня" required></label>
+        <button id="go" class="big" type="submit">Создать комнату</button>
+        <p id="hmsg"></p>
+      </form>
+    </div>
+  </section>
+
+  <section id="game" class="game hidden">
+    <div class="stage" id="stage">
+      <div class="top">
+        <div class="hint" id="hint"></div>
+        <button class="ghost hidden" id="skipBtn" type="button">Другое слово</button>
+        <div class="timer hidden" id="timer"><span id="tsec">0</span></div>
+      </div>
+      <div class="board">
+        <canvas id="cv"></canvas>
+        <div class="over hidden" id="over"><div class="panel" id="panel"></div></div>
+      </div>
+      <div class="tools hidden" id="tools"></div>
+    </div>
+    <aside class="side">
+      <div class="box"><h3 id="plTitle">Игроки</h3><ul class="pl" id="pl"></ul></div>
+      <div class="box chat"><h3>Чат и догадки</h3><div id="log" aria-live="polite"></div>
+        <form id="gf"><input id="gi" maxlength="80" autocomplete="off" placeholder="Пиши догадку…"><button type="submit" aria-label="Отправить">➤</button></form>
+      </div>
+    </aside>
+  </section>
+  <div class="status" id="status"></div>
+</div>
+
+<script>
+{
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const PREFIX = 'krokodil-rus-game-v2/';
+const BROKERS = ['wss://broker.emqx.io:8084/mqtt', 'wss://broker.hivemq.com:8884/mqtt', 'wss://test.mosquitto.org:8081/mqtt'];
+const rid = n => Array.from({length: n}, () => 'abcdefghjkmnpqrstuvwxyz23456789'[Math.floor(Math.random() * 31)]).join('');
+
+/* ---------- слова ---------- */
+const WORDS = {
+  girl: {name: 'Женские штучки', list: `помада|тушь для ресниц|сумочка|туфли на каблуке|маникюр|лак для ногтей|пилочка для ногтей|фен|плойка|утюжок для волос|бигуди|серьги|кольцо|ожерелье|браслет|зеркальце|духи|румяна|пудра|тени для век|блеск для губ|патчи под глаза|тканевая маска|крем для рук|косметичка|расчёска|заколка|резинка для волос|ободок|накладные ресницы|пинцет|бальзам для губ|кисточка для макияжа|спонжик|клатч|балетки|колготки|платье|юбка|сарафан|пижама|халат|пушистые тапочки|шарф|шляпка|солнечные очки|букет цветов|ароматическая свечка|пенная ванна|коврик для йоги|шоколадка|бокал вина|селфи|сплетни|шопинг|примерочная|педикюр|бантик|хвостик|коса|каре|чёлка|лифчик|кроп-топ|сапоги|шуба|брови|маска для волос|девичник|подружки`.split('|')},
+  simple: {name: 'Просто слова', list: `кот|собака|дом|солнце|луна|звезда|дерево|машина|самолёт|корабль|велосипед|яблоко|банан|арбуз|торт|пицца|мороженое|чайник|телефон|телевизор|компьютер|очки|шляпа|зонт|ключ|замок|книга|карандаш|ножницы|часы|лампа|стул|кровать|окно|лестница|мост|гора|река|море|остров|облако|дождь|радуга|снеговик|ёлка|подарок|воздушный шарик|пират|робот|привидение|дракон|единорог|русалка|космонавт|ракета|динозавр|жираф|слон|крокодил|черепаха|улитка|паук|бабочка|пчела|акула|кит|пингвин|сова|змея|лягушка|ёжик|медведь|заяц|лиса|корова|свинья|курица|яйцо|сыр|хот-дог|бургер|гитара|барабан|микрофон|наушники|футбол|бассейн|палатка|костёр|маяк|вулкан|кактус|гриб|цветок|светофор|поезд|автобус|вертолёт|якорь|корона|меч|сердце|поцелуй|свадьба|будильник`.split('|')},
+  rap: {name: 'Песни русского рэпа', list: [
+    'Медуза|Matrang','Розовое вино|Элджей и Feduk','Sayonara детка|Элджей|сайонара детка',
+    'Я в моменте|Джарахов и Markul','Юморист|Face','Бургер|Face','Гоша Рубчинский|Face',
+    'Тамада|Miyagi & Эндшпиль','I Got Love|Miyagi & Эндшпиль|ай гот лав','Сансара|Баста','Моя игра|Баста',
+    'Выпускной (Медлячок)|Баста|выпускной,медлячок','Где нас нет|Oxxxymiron','Город под подошвой|Oxxxymiron',
+    'Признаки жизни|Oxxxymiron','Это любовь|Скриптонит','Положение|Скриптонит','Вокруг шум|Каста',
+    'Cadillac|Morgenshtern и Элджей|кадиллак','Новый мерин|Morgenshtern','Лондон|Тимати и Григорий Лепс',
+    'Баклажан|Тимати','Где ты, где я|Тимати и Егор Крид','Будильник|Егор Крид','Самая самая|Егор Крид',
+    'Малый повзрослел|Макс Корж','Мотылёк|Макс Корж','Жить в кайф|Макс Корж','Небо поможет нам|Макс Корж',
+    'Gimme the Loot|Big Baby Tape|гимми зе лут','Медина|Jah Khalib','Leila|Jah Khalib|лейла',
+    'Хлопья летят наверх|Feduk','Моряк|Feduk','Пуля-дура|Хаски','Black Siemens|Pharaoh|блэк сименс',
+    'На белом|Каспийский Груз','Выдыхай|Noize MC','За деньги да|INSTASAMKA','Ice Baby|Гуф|айс беби,айс бэйби'
+  ]}
+};
+const parseW = e => { const [w, a, alt] = e.split('|'); return {w, a: a || '', alt: alt ? alt.split(',') : []}; };
+const norm = s => String(s).toLowerCase().replace(/ё/g, 'е').replace(/[^a-zа-я0-9]/g, '');
+function lev(a, b) {
+  if (Math.abs(a.length - b.length) > 2) return 9;
+  let prev = Array.from({length: b.length + 1}, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[b.length];
+}
+const variants = W => [W.w, ...W.alt].map(norm);
+const isCorrect = (t, W) => variants(W).includes(norm(t));
+const isClose = (t, W) => { const n = norm(t); return n.length >= 4 && variants(W).some(v => lev(n, v) <= (v.length >= 8 ? 2 : 1)); };
+
+/* ---------- общее ---------- */
+let myName = '';
+try { myName = localStorage.getItem('croc-name') || ''; } catch (e) {}
+const QS = new URLSearchParams(location.search);
+const roomParam = (QS.get('room') || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 10);
+const srvParam = Math.max(0, Math.min(BROKERS.length - 1, parseInt(QS.get('s') || '0', 10) || 0));
+let mq = null, srv = 0, isHost = false, me = null, code = '', base = '';
+let lastHost = Date.now();
+function pub(topic, m) { if (mq && mq.connected) try { mq.publish(topic, JSON.stringify(m)); } catch (e) {} }
+/* подключение к брокеру: перебираем серверы, пока какой-то не ответит */
+function connectBroker(list, willFor, onReady, onFail) {
+  let k = 0;
+  const next = () => {
+    if (k >= list.length) { onFail(); return; }
+    const idx = list[k++];
+    status('Подключаемся к серверу ' + (idx + 1) + '…');
+    let c, ok = false;
+    try {
+      c = mqtt.connect(BROKERS[idx], {clientId: 'kr_' + rid(10), clean: true, connectTimeout: 7000, reconnectPeriod: 2000, keepalive: 30, will: willFor(idx)});
+    } catch (e) { next(); return; }
+    const t = setTimeout(() => { if (!ok) { try { c.end(true); } catch (e) {} next(); } }, 8000);
+    c.on('connect', () => {
+      if (!ok) { ok = true; clearTimeout(t); mq = c; srv = idx; onReady(); }
+      else status('');
+    });
+    c.on('reconnect', () => { if (ok) status('Связь прервалась, переподключаемся…'); });
+    c.on('error', () => {});
+  };
+  next();
+}
+let S = null;
+const status = t => { $('#status').textContent = t || ''; };
+
+$('#nm').value = myName;
+if (roomParam) {
+  $('#go').textContent = 'Войти в комнату';
+  $('#hsub').textContent = 'Тебя позвали в комнату ' + roomParam.toUpperCase() + '. Введи имя и заходи!';
+}
+$('#hf').addEventListener('submit', e => {
+  e.preventDefault();
+  myName = $('#nm').value.trim().slice(0, 20);
+  if (!myName) return;
+  try { localStorage.setItem('croc-name', myName); } catch (e) {}
+  if (typeof mqtt === 'undefined') { $('#hmsg').textContent = 'Не загрузилась библиотека связи. Проверь интернет и обнови страницу.'; return; }
+  $('#go').disabled = true; $('#hmsg').textContent = '';
+  status('Подключаемся…');
+  roomParam ? guestStart(roomParam) : hostStart();
+});
+
+function send(m) {
+  if (isHost) hostMsg('host', m);
+  else pub(base + 'h', {from: me, m});
+}
+
+/* ---------- ХОСТ ---------- */
+const seen = new Map(); // pid -> когда последний раз было слышно игрока
+let G = null;
+function newGame(keepPlayers) {
+  const players = keepPlayers && G ? G.players.map(p => ({...p, score: 0, guessed: false})) : [];
+  const prev = G || {};
+  G = {phase: 'lobby', players, drawer: null, drawerIdx: -1, word: null, endsAt: 0,
+       time: prev.time || 80, laps: prev.laps || 2, cats: prev.cats || ['girl', 'simple', 'rap'],
+       turn: 0, total: 0, used: new Set(), revealed: [], skips: 0, strokes: [], timer: null};
+}
+function hostStart() {
+  isHost = true; code = rid(5); base = PREFIX + code + '/';
+  connectBroker(BROKERS.map((_, i) => i),
+    () => ({topic: base + 'all', payload: JSON.stringify({t: 'hostgone'}), qos: 0, retain: false}),
+    () => {
+      mq.subscribe(base + 'h');
+      mq.on('message', (topic, buf) => {
+        let d; try { d = JSON.parse(buf.toString()); } catch (e) { return; }
+        if (!d || typeof d.from !== 'string' || d.from.length > 30 || d.from === 'host') return;
+        seen.set(d.from, Date.now());
+        hostMsg(d.from, d.m);
+      });
+      me = 'host'; newGame(false); addPlayer('host', myName);
+      showGame(); status('');
+      clientMsg({t: 'chat', k: 'sys', text: 'Комната создана. Скопируй ссылку и отправь друзьям.'});
+      broadcast();
+    },
+    () => { $('#go').disabled = false; status(''); $('#hmsg').textContent = 'Не удалось связаться ни с одним сервером. Проверь интернет или попробуй другую сеть (например, Wi‑Fi вместо мобильного).'; });
+}
+/* хозяин: пульс для всех и уборка пропавших игроков */
+setInterval(() => {
+  if (!isHost || !G) return;
+  const now = Date.now();
+  G.players.filter(p => p.id !== 'host' && now - (seen.get(p.id) || 0) > 20000).forEach(p => dropPlayer(p.id));
+  broadcast();
+}, 4000);
+const player = id => G.players.find(p => p.id === id);
+function addPlayer(id, nm) {
+  const p = player(id);
+  if (p) { p.name = nm; return; }
+  G.players.push({id, name: nm, score: 0, guessed: false});
+  if (G.phase !== 'lobby') G.total = Math.max(G.total, G.turn + 1);
+}
+function dropPlayer(pid) {
+  seen.delete(pid);
+  if (!G) return;
+  const i = G.players.findIndex(p => p.id === pid);
+  if (i < 0) return;
+  const p = G.players[i];
+  G.players.splice(i, 1);
+  if (i <= G.drawerIdx) G.drawerIdx--;
+  sysAll(p.name + ' выходит из игры');
+  if (G.phase !== 'lobby' && G.phase !== 'over' && G.players.length < 2) { endGame(); return; }
+  if (G.phase === 'draw') { if (pid === G.drawer) endTurn(); else checkAll(); }
+  broadcast();
+}
+function sendTo(pid, m) {
+  if (pid === 'host') { clientMsg(m); return; }
+  pub(base + 'c/' + pid, m);
+}
+function toAll(m) { pub(base + 'all', m); clientMsg(m); }
+function relay(from, m) { pub(base + 'all', {...m, by: from}); if (from !== 'host') clientMsg(m); }
+const sysAll = text => toAll({t: 'chat', k: 'sys', text});
+const leftSec = () => Math.max(0, Math.ceil((G.endsAt - Date.now()) / 1000));
+function mask() {
+  if (!G.word) return '';
+  return [...G.word.w].map((ch, i) => /[a-zа-яё0-9]/i.test(ch) && !G.revealed.includes(i) ? '_' : ch).join('');
+}
+function stateFor(pid) {
+  const drawing = G.phase === 'draw';
+  return {t: 'state', you: pid, code, phase: G.phase,
+    players: G.players.map(p => ({id: p.id, name: p.name, score: p.score, guessed: p.guessed})),
+    drawer: G.drawer, left: drawing ? leftSec() : 0, time: G.time, laps: G.laps, cats: G.cats,
+    turn: G.turn, total: G.total, cat: G.word ? WORDS[G.word.cat].name : '',
+    hint: drawing ? mask() : '',
+    word: G.word && (pid === G.drawer || G.phase === 'reveal') ? G.word.w : null,
+    artist: G.word && pid === G.drawer ? G.word.a : '',
+    canSkip: G.skips < 2};
+}
+function broadcast() { G.players.forEach(p => sendTo(p.id, stateFor(p.id))); }
+function pickWord() {
+  let pool = [];
+  G.cats.forEach(c => WORDS[c].list.forEach(e => pool.push({e, c})));
+  let fresh = pool.filter(x => !G.used.has(x.e));
+  if (!fresh.length) { G.used.clear(); fresh = pool; }
+  const x = fresh[Math.floor(Math.random() * fresh.length)];
+  G.used.add(x.e);
+  return {...parseW(x.e), cat: x.c};
+}
+function clearBoard() { G.strokes = []; toAll({t: 'clear'}); }
+function startGame(o) {
+  if (G.players.length < 2) return;
+  const cats = (Array.isArray(o.cats) ? o.cats : []).filter(c => WORDS[c]);
+  G.cats = cats.length ? cats : ['simple'];
+  G.time = [60, 80, 100, 120].includes(+o.time) ? +o.time : 80;
+  G.laps = [1, 2, 3].includes(+o.laps) ? +o.laps : 2;
+  G.players.forEach(p => { p.score = 0; p.guessed = false; });
+  G.turn = 0; G.total = G.laps * G.players.length; G.drawerIdx = -1; G.used.clear();
+  sysAll('Игра началась! Кругов: ' + G.laps);
+  nextTurn();
+}
+function nextTurn() {
+  clearTimeout(G.timer);
+  if (G.turn >= G.total || G.players.length < 2) { endGame(); return; }
+  G.drawerIdx = (G.drawerIdx + 1) % G.players.length;
+  const d = G.players[G.drawerIdx];
+  G.drawer = d.id; G.turn++;
+  G.players.forEach(p => p.guessed = false);
+  G.word = pickWord(); G.revealed = []; G.skips = 0;
+  clearBoard();
+  G.endsAt = Date.now() + G.time * 1000;
+  G.phase = 'draw';
+  sysAll('Рисует ' + d.name);
+  broadcast();
+}
+function endTurn() {
+  if (G.phase !== 'draw') return;
+  G.phase = 'reveal';
+  sysAll('Это было: «' + G.word.w + '»' + (G.word.a ? ' — ' + G.word.a : ''));
+  broadcast();
+  G.timer = setTimeout(nextTurn, 5000);
+}
+function endGame() {
+  clearTimeout(G.timer);
+  G.phase = 'over'; G.drawer = null;
+  broadcast();
+}
+function checkAll() {
+  const others = G.players.filter(p => p.id !== G.drawer);
+  if (others.length && others.every(p => p.guessed)) endTurn();
+}
+let lastLeft = -1;
+setInterval(() => {
+  if (!G || G.phase !== 'draw') return;
+  const l = leftSec(), letters = [...G.word.w].map((c, i) => /[a-zа-яё0-9]/i.test(c) ? i : -1).filter(i => i >= 0);
+  const want = l <= G.time * 0.25 && letters.length >= 6 ? 2 : l <= G.time * 0.5 && letters.length >= 4 ? 1 : 0;
+  let changed = false;
+  while (G.revealed.length < want) {
+    const free = letters.filter(i => !G.revealed.includes(i));
+    if (!free.length) break;
+    G.revealed.push(free[Math.floor(Math.random() * free.length)]); changed = true;
+  }
+  if (l <= 0) { endTurn(); return; }
+  if (l !== lastLeft || changed) { lastLeft = l; broadcast(); }
+}, 300);
+const okSeg = s => s && typeof s.id === 'string' && s.id.length < 48 && /^#[0-9a-f]{6}$/i.test(s.c) &&
+  typeof s.w === 'number' && s.w > 0 && s.w <= 80 && Array.isArray(s.p) && s.p.length % 2 === 0 &&
+  s.p.length <= 800 && s.p.every(n => typeof n === 'number' && n >= -0.2 && n <= 1.2);
+
+function hostMsg(pid, d) {
+  if (!d || typeof d !== 'object' || !G) return;
+  const p = player(pid);
+  if (d.t === 'ping') return;
+  if (d.t === 'bye') { dropPlayer(pid); return; }
+  if (d.t === 'join') {
+    if (!p && G.players.length >= 16) { sendTo(pid, {t: 'full'}); return; }
+    const nm = String(d.name || 'Игрок').trim().slice(0, 20) || 'Игрок';
+    const isNew = !p;
+    addPlayer(pid, nm);
+    sendTo(pid, {t: 'strokes', list: G.strokes});
+    if (isNew) sysAll(nm + ' заходит в игру');
+    broadcast();
+    return;
+  }
+  if (!p) return;
+  const isDrawer = pid === G.drawer && G.phase === 'draw';
+  switch (d.t) {
+    case 'seg': {
+      if (!isDrawer || !okSeg(d.s)) return;
+      const s = d.s;
+      let st = G.strokes.find(x => x.id === s.id);
+      if (!st) { st = {id: s.id, c: s.c, w: s.w, p: []}; G.strokes.push(st); }
+      st.p.push(...s.p);
+      relay(pid, {t: 'seg', s: {id: s.id, c: s.c, w: s.w, p: s.p}});
+      break;
+    }
+    case 'undo': { if (!isDrawer) return; const st = G.strokes.pop(); if (st) toAll({t: 'undo', id: st.id}); break; }
+    case 'clear': if (isDrawer) clearBoard(); break;
+    case 'skip':
+      if (!isDrawer || G.skips >= 2) return;
+      G.skips++; G.word = pickWord(); G.revealed = []; clearBoard(); broadcast(); break;
+    case 'start': if (pid === 'host' && (G.phase === 'lobby')) startGame(d); break;
+    case 'again': if (pid === 'host' && G.phase === 'over') { newGame(true); sysAll('Новая игра! Ждём старта.'); broadcast(); } break;
+    case 'guess': {
+      const text = String(d.text || '').trim().slice(0, 80);
+      if (!text) return;
+      if (G.phase === 'draw') {
+        if (pid === G.drawer) { sendTo(pid, {t: 'chat', k: 'sys', text: 'Пока рисуешь, писать в чат нельзя — вдруг подскажешь :)'}); return; }
+        if (p.guessed) {
+          G.players.filter(q => q.guessed || q.id === G.drawer).forEach(q => sendTo(q.id, {t: 'chat', k: 'secret', name: p.name, text}));
+          return;
+        }
+        if (isCorrect(text, G.word)) {
+          p.guessed = true;
+          const pts = Math.max(3, Math.round(10 * leftSec() / G.time));
+          p.score += pts;
+          const dr = player(G.drawer); if (dr) dr.score += 3;
+          toAll({t: 'chat', k: 'ok', text: p.name + ' угадывает! +' + pts});
+          sendTo(pid, {t: 'yay'});
+          broadcast(); checkAll();
+          return;
+        }
+        toAll({t: 'chat', k: 'msg', name: p.name, text});
+        if (isClose(text, G.word)) sendTo(pid, {t: 'chat', k: 'close', text: 'Почти! Очень близко'});
+        return;
+      }
+      toAll({t: 'chat', k: 'msg', name: p.name, text});
+      break;
+    }
+  }
+}
+
+/* ---------- ГОСТЬ ---------- */
+function guestStart(room) {
+  code = room; base = PREFIX + room + '/';
+  me = 'p' + rid(9);
+  let joined = false, tries = 0;
+  connectBroker([srvParam],
+    () => ({topic: base + 'h', payload: JSON.stringify({from: me, m: {t: 'bye'}}), qos: 0, retain: false}),
+    () => {
+      mq.on('message', (topic, buf) => {
+        let d; try { d = JSON.parse(buf.toString()); } catch (e) { return; }
+        if (!d || typeof d !== 'object') return;
+        lastHost = Date.now();
+        if (d.t === 'hostgone') { hostGone(); return; }
+        if (d.t === 'full') { if (!joined) { $('#go').disabled = false; status(''); $('#hmsg').textContent = 'В комнате уже 16 игроков — мест нет.'; } return; }
+        if (d.t === 'seg' && d.by === me) return; // свои линии уже нарисованы
+        if (d.t === 'state' && !joined) { joined = true; showGame(); status(''); }
+        clientMsg(d);
+      });
+      mq.subscribe([base + 'all', base + 'c/' + me], () => {
+        status('Стучимся в комнату…');
+        const knock = () => {
+          if (joined) return;
+          if (tries++ >= 5) { $('#go').disabled = false; status(''); $('#hmsg').textContent = 'Комната не отвечает. Возможно, создатель закрыл вкладку — попроси новую ссылку.'; return; }
+          send({t: 'join', name: myName});
+          setTimeout(knock, 2500);
+        };
+        knock();
+      });
+      mq.on('connect', () => { if (joined) send({t: 'join', name: myName}); });
+    },
+    () => { $('#go').disabled = false; status(''); $('#hmsg').textContent = 'Не удалось связаться с сервером игры. Проверь интернет или попробуй другую сеть.'; });
+  setInterval(() => {
+    if (!joined || (S && S.phase === 'gone')) return;
+    send({t: 'ping'});
+    if (Date.now() - lastHost > 20000) hostGone();
+  }, 5000);
+  window.addEventListener('pagehide', () => send({t: 'bye'}));
+}
+function hostGone() {
+  if (!S || S.phase === 'gone') return;
+  S = {...S, phase: 'gone'};
+  render();
+}
+
+/* ---------- КЛИЕНТ: отрисовка ---------- */
+const cv = $('#cv'), ctx = cv.getContext('2d');
+const strokes = new Map(); let order = [];
+function fit() {
+  const r = cv.getBoundingClientRect(), dpr = Math.min(devicePixelRatio || 1, 2);
+  if (!r.width) return;
+  cv.width = Math.round(r.width * dpr); cv.height = Math.round(r.height * dpr);
+  redraw();
+}
+const ro = new ResizeObserver(fit); ro.observe(cv);
+function drawStroke(st, from) {
+  const W = cv.width, H = cv.height, p = st.p;
+  if (!p.length) return;
+  ctx.strokeStyle = st.c; ctx.fillStyle = st.c;
+  ctx.lineWidth = st.w * W / 1000; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  if (p.length === 2) { ctx.beginPath(); ctx.arc(p[0] * W, p[1] * H, ctx.lineWidth / 2, 0, 7); ctx.fill(); return; }
+  const s = Math.max(0, from - 2);
+  ctx.beginPath(); ctx.moveTo(p[s] * W, p[s + 1] * H);
+  for (let i = s + 2; i < p.length; i += 2) ctx.lineTo(p[i] * W, p[i + 1] * H);
+  ctx.stroke();
+}
+function redraw() {
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height);
+  order.forEach(id => { const st = strokes.get(id); if (st) drawStroke(st, 0); });
+}
+function addSeg(s, noDraw) {
+  if (!okSeg(s)) return;
+  let st = strokes.get(s.id);
+  if (!st) { st = {id: s.id, c: s.c, w: s.w, p: []}; strokes.set(s.id, st); order.push(s.id); }
+  const from = st.p.length;
+  st.p.push(...s.p);
+  if (!noDraw) drawStroke(st, from);
+}
+
+let logN = 0;
+function addChat(m) {
+  const d = document.createElement('div');
+  const k = ['sys', 'ok', 'close', 'secret', 'msg'].includes(m.k) ? m.k : 'msg';
+  d.className = k;
+  if (m.name) { const b = document.createElement('b'); b.textContent = m.name + ': '; d.appendChild(b); }
+  d.appendChild(document.createTextNode(String(m.text || '')));
+  const log = $('#log');
+  const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+  log.appendChild(d);
+  if (++logN > 150) log.firstChild.remove();
+  if (atBottom || k !== 'msg') log.scrollTop = log.scrollHeight;
+}
+function clientMsg(m) {
+  if (!m || typeof m !== 'object') return;
+  switch (m.t) {
+    case 'state': S = m; me = m.you; render(); break;
+    case 'seg': addSeg(m.s); break;
+    case 'strokes': strokes.clear(); order = []; (Array.isArray(m.list) ? m.list : []).forEach(s => addSeg(s, true)); redraw(); break;
+    case 'undo': strokes.delete(m.id); order = order.filter(x => x !== m.id); redraw(); break;
+    case 'clear': strokes.clear(); order = []; redraw(); break;
+    case 'chat': addChat(m); break;
+    case 'yay': { const st = $('#stage'); st.classList.remove('yay'); void st.offsetWidth; st.classList.add('yay'); break; }
+  }
+}
+
+/* ---------- инструменты ---------- */
+const COLORS = ['#13251a', '#7a7a7a', '#e5484d', '#ff8a3d', '#ffd23f', '#2fae5f', '#2f7de1', '#7b4fd6', '#ff6fb1', '#8b5a2b'];
+const SIZES = [4, 9, 18, 36];
+let color = COLORS[0], size = SIZES[1], eraser = false;
+function renderTools() {
+  $('#tools').innerHTML =
+    COLORS.map(c => `<button type="button" class="sw${c === color && !eraser ? ' on' : ''}" data-c="${c}" style="background:${c}" aria-label="Цвет ${c}"></button>`).join('') +
+    '<span class="sep"></span>' +
+    SIZES.map(s => `<button type="button" class="sz${s === size ? ' on' : ''}" data-s="${s}" aria-label="Толщина ${s}"><i style="width:${Math.min(28, s * .7 + 3)}px;height:${Math.min(28, s * .7 + 3)}px"></i></button>`).join('') +
+    '<span class="sep"></span>' +
+    `<button type="button" class="tl${eraser ? ' on' : ''}" data-x="eraser">Ластик</button>` +
+    '<button type="button" class="tl" data-x="undo">Отменить</button>' +
+    '<button type="button" class="tl" data-x="clear">Очистить</button>';
+}
+$('#tools').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.c) { color = b.dataset.c; eraser = false; }
+  else if (b.dataset.s) size = +b.dataset.s;
+  else if (b.dataset.x === 'eraser') eraser = !eraser;
+  else if (b.dataset.x === 'undo') { send({t: 'undo'}); return; }
+  else if (b.dataset.x === 'clear') { send({t: 'clear'}); return; }
+  renderTools();
+});
+$('#skipBtn').addEventListener('click', () => send({t: 'skip'}));
+
+const canDraw = () => S && S.phase === 'draw' && S.drawer === me;
+let cur = null, buf = [], flushT = null;
+function flush() {
+  clearTimeout(flushT); flushT = null;
+  if (!cur || !buf.length) return;
+  send({t: 'seg', s: {id: cur.id, c: cur.c, w: cur.w, p: buf}});
+  buf = [];
+}
+function pushPt(e) {
+  const r = cv.getBoundingClientRect();
+  const x = +((e.clientX - r.left) / r.width).toFixed(4), y = +((e.clientY - r.top) / r.height).toFixed(4);
+  buf.push(x, y);
+  addSeg({id: cur.id, c: cur.c, w: cur.w, p: [x, y]});
+  if (buf.length >= 400) flush();
+  else if (!flushT) flushT = setTimeout(flush, 60);
+}
+let drawingNow = false;
+cv.addEventListener('pointerdown', e => {
+  if (!canDraw()) return;
+  e.preventDefault();
+  flush();
+  try { cv.setPointerCapture(e.pointerId); } catch (err) {}
+  cur = {id: String(me).slice(0, 20) + '-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), c: eraser ? '#ffffff' : color, w: eraser ? size * 2 : size};
+  drawingNow = true;
+  pushPt(e);
+});
+cv.addEventListener('pointermove', e => {
+  if (!drawingNow || !canDraw()) return;
+  const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+  (evs.length ? evs : [e]).forEach(pushPt);
+});
+const stop = () => { if (!drawingNow) return; drawingNow = false; flush(); };
+cv.addEventListener('pointerup', stop); cv.addEventListener('pointercancel', stop); cv.addEventListener('lostpointercapture', stop);
+
+$('#gf').addEventListener('submit', e => {
+  e.preventDefault();
+  const t = $('#gi').value.trim();
+  if (!t) return;
+  send({t: 'guess', text: t});
+  $('#gi').value = '';
+});
+
+/* ---------- экран ---------- */
+function showGame() {
+  $('#home').classList.add('hidden'); $('#game').classList.remove('hidden');
+  $('#roomTag').textContent = 'Комната ' + code.toUpperCase();
+  renderTools(); setTimeout(fit, 0);
+}
+const inviteLink = () => location.origin + location.pathname + '?room=' + code + '&s=' + srv;
+const pname = id => { const p = S.players.find(x => x.id === id); return p ? p.name : 'Кто-то'; };
+
+function render() {
+  if (!S) return;
+  const amDrawer = S.drawer === me, ph = S.phase;
+  // игроки
+  const sorted = ph === 'lobby' ? S.players : [...S.players].sort((a, b) => b.score - a.score);
+  $('#plTitle').textContent = 'Игроки · ' + S.players.length + (ph === 'draw' || ph === 'reveal' ? ' · ход ' + S.turn + ' из ' + S.total : '');
+  $('#pl').innerHTML = sorted.map(p => `<li class="${p.id === me ? 'me' : ''}${p.guessed ? ' got' : ''}">
+    <span class="nm">${esc(p.name)}${p.id === me ? ' (ты)' : ''}${p.id === 'host' ? ' · хозяин' : ''}</span>
+    ${p.id === S.drawer && ph === 'draw' ? '<span class="tag">рисует</span>' : ''}${p.guessed ? '<span class="tag g">угадал(а)</span>' : ''}
+    <span class="sc">${p.score | 0}</span></li>`).join('');
+  // верх
+  const hint = $('#hint'), timer = $('#timer');
+  if (ph === 'draw') {
+    if (amDrawer) hint.innerHTML = `<small>Ты рисуешь · ${esc(S.cat)}</small><b>${esc(S.word || '')}</b>${S.artist ? `<small>${esc(S.artist)}</small>` : ''}`;
+    else hint.innerHTML = `<small>${esc(pname(S.drawer))} рисует · ${esc(S.cat)}</small>${esc(S.hint)}`;
+    timer.classList.remove('hidden');
+    $('#tsec').textContent = S.left;
+    timer.style.setProperty('--p', Math.max(0, Math.min(1, S.left / S.time)));
+    timer.classList.toggle('low', S.left <= 10);
+  } else {
+    timer.classList.add('hidden');
+    hint.innerHTML = ph === 'lobby' ? '<small>Лобби</small>Собираем команду' : ph === 'reveal' ? '<small>Раунд окончен</small>' + esc(S.word || '') : ph === 'over' ? '<small>Финал</small>Игра окончена' : '<small>Связь потеряна</small>';
+  }
+  const skip = $('#skipBtn');
+  skip.classList.toggle('hidden', !(ph === 'draw' && amDrawer && S.canSkip));
+  $('#tools').classList.toggle('hidden', !(ph === 'draw' && amDrawer));
+  cv.classList.toggle('drawing', ph === 'draw' && amDrawer);
+  const gi = $('#gi');
+  gi.disabled = ph === 'draw' && amDrawer;
+  gi.placeholder = gi.disabled ? 'Ты рисуешь — чат на паузе' : ph === 'draw' ? 'Пиши догадку…' : 'Сообщение в чат…';
+  if (ph === 'gone') gi.disabled = true;
+  renderOverlay();
+}
+
+let panelKey = '';
+function renderOverlay() {
+  const ov = $('#over'), pn = $('#panel'), ph = S.phase;
+  if (ph === 'draw') { ov.classList.add('hidden'); panelKey = ''; return; }
+  ov.classList.remove('hidden');
+  const key = ph + '|' + S.players.map(p => p.id + p.name + p.score + p.guessed).join(',') + '|' + S.word;
+  if (key === panelKey && ph === 'lobby') { const st = $('#startBtn'); if (st) st.disabled = S.players.length < 2; return; }
+  if (key === panelKey) return;
+  panelKey = key;
+  if (ph === 'lobby') {
+    const host = me === 'host';
+    pn.innerHTML = `<h2>Комната ${esc(code.toUpperCase())}</h2>
+      <p>${host ? 'Отправь друзьям эту ссылку. Когда все зайдут — жми «Начать».' : 'Ждём, пока хозяин комнаты начнёт игру. Можно позвать ещё друзей по ссылке:'}</p>
+      <div class="linkrow"><input id="lnk" readonly value="${esc(inviteLink())}"><button type="button" class="ghost" id="cp">Копировать</button></div>
+      ${host ? `<div class="opts">
+        ${Object.entries(WORDS).map(([k, v]) => `<label class="chk"><input type="checkbox" name="cat" value="${k}"${S.cats.includes(k) ? ' checked' : ''}> ${esc(v.name)} <span style="margin-left:auto;color:var(--mute);font-size:13px">${v.list.length} слов</span></label>`).join('')}
+        <div class="row2">
+          <label>Время на рисунок<select id="tm">${[60, 80, 100, 120].map(t => `<option value="${t}"${t === S.time ? ' selected' : ''}>${t} секунд</option>`).join('')}</select></label>
+          <label>Сколько кругов<select id="lp">${[1, 2, 3].map(t => `<option value="${t}"${t === S.laps ? ' selected' : ''}>${t}</option>`).join('')}</select></label>
+        </div></div>
+        <button type="button" class="big" id="startBtn"${S.players.length < 2 ? ' disabled' : ''}>Начать игру</button>
+        <p style="margin:8px 0 0;font-size:13px;text-align:center">Нужно минимум 2 игрока. Не закрывай вкладку — игра живёт у тебя.</p>` : ''}`;
+    $('#cp').onclick = () => {
+      const i = $('#lnk'); i.select();
+      const done = () => { $('#cp').textContent = 'Скопировано'; setTimeout(() => { const b = $('#cp'); if (b) b.textContent = 'Копировать'; }, 1600); };
+      if (navigator.clipboard) navigator.clipboard.writeText(i.value).then(done, () => { try { document.execCommand('copy'); done(); } catch (e) {} });
+      else { try { document.execCommand('copy'); done(); } catch (e) {} }
+    };
+    if (host) $('#startBtn').onclick = () => {
+      const cats = [...document.querySelectorAll('input[name=cat]:checked')].map(x => x.value);
+      if (!cats.length) { addChat({k: 'sys', text: 'Выбери хотя бы одну категорию слов'}); return; }
+      send({t: 'start', cats, time: +$('#tm').value, laps: +$('#lp').value});
+    };
+  } else if (ph === 'reveal') {
+    const got = S.players.filter(p => p.guessed).map(p => p.name);
+    pn.innerHTML = `<p>Загаданное слово</p><div class="revealw">${esc(S.word || '')}</div>
+      <p>${got.length ? 'Угадали: ' + got.map(esc).join(', ') : 'Никто не угадал'}</p><p style="margin:0;font-size:13px">Следующий ход через пару секунд…</p>`;
+  } else if (ph === 'over') {
+    const top = [...S.players].sort((a, b) => b.score - a.score);
+    pn.innerHTML = `<h2>${top[0] ? 'Победа: ' + esc(top[0].name) + '!' : 'Игра окончена'}</h2><p>Итоговые очки</p>
+      <ul class="pl" style="margin-bottom:16px">${top.map((p, i) => `<li class="${p.id === me ? 'me' : ''}"><span class="nm">${i + 1}. ${esc(p.name)}</span><span class="sc">${p.score | 0}</span></li>`).join('')}</ul>
+      ${me === 'host' ? '<button type="button" class="big" id="againBtn">Сыграть ещё</button>' : '<p style="margin:0">Хозяин комнаты может запустить новую игру.</p>'}`;
+    const a = $('#againBtn'); if (a) a.onclick = () => send({t: 'again'});
+  } else if (ph === 'gone') {
+    pn.innerHTML = `<h2>Хозяин комнаты отключился</h2><p>Игра жила на его вкладке, поэтому она закончилась. Попроси новую ссылку или создай свою комнату.</p>
+      <button type="button" class="big" id="homeBtn">Создать свою комнату</button>`;
+    $('#homeBtn').onclick = () => { location.href = location.origin + location.pathname; };
+  }
+}
+window.addEventListener('pagehide', () => { if (isHost) pub(base + 'all', {t: 'hostgone'}); });
+window.addEventListener('beforeunload', e => { if (isHost && G && G.players.length > 1) { e.preventDefault(); e.returnValue = ''; } });
+}
+</script>
+</body>
+</html>
