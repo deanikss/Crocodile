@@ -172,6 +172,7 @@ const rid = n => Array.from({length: n}, () => 'abcdefghjkmnpqrstuvwxyz23456789'
 /* ---------- слова ---------- */
 const WORDS = {
   girl: {name: 'Женские штучки', list: `помада|тушь для ресниц|сумочка|туфли на каблуке|маникюр|лак для ногтей|пилочка для ногтей|фен|плойка|утюжок для волос|бигуди|серьги|кольцо|ожерелье|браслет|зеркальце|духи|румяна|пудра|тени для век|блеск для губ|патчи под глаза|тканевая маска|крем для рук|косметичка|расчёска|заколка|резинка для волос|ободок|накладные ресницы|пинцет|бальзам для губ|кисточка для макияжа|спонжик|клатч|балетки|колготки|платье|юбка|сарафан|пижама|халат|пушистые тапочки|шарф|шляпка|солнечные очки|букет цветов|ароматическая свечка|пенная ванна|коврик для йоги|шоколадка|бокал вина|селфи|сплетни|шопинг|примерочная|педикюр|бантик|хвостик|коса|каре|чёлка|лифчик|кроп-топ|сапоги|шуба|брови|маска для волос|девичник|подружки`.split('|')},
+  girlhard: {name: 'Женские штучки: хард', list: `контуринг|стрелки на глазах|смоки айс|красная помада на зубах|тональник не в тон|отросшие корни|неудачная чёлка|балаяж|кератиновое выпрямление|ламинирование бровей|наращивание ресниц|ресница попала в глаз|скребок гуаша|роллер для лица|кислотный пилинг|крем с SPF|холодильник для косметики|френч|сколотый гель-лак|дизайн ногтей|капсульный гардероб|шкаф полный, а надеть нечего|оверсайз|секонд-хенд|стрелка на колготках|каблук застрял в решётке|сумка, в которой всё теряется|пункт выдачи маркетплейса|корзина на маркетплейсе|чёрная пятница|шопинг-терапия|лук дня|дресс-код|удачный ракурс|фильтр для селфи|сторис|рилс|подруга-фотограф|вечеринка в пижамах|девичник|свидание вслепую|френдзона|токсичный бывший|кольцо в бокале шампанского|поймать букет невесты|женская интуиция|шоколадка от стресса|гороскоп|натальная карта|ретроградный Меркурий|карты таро|карта желаний|аффирмации|детокс|смузи|матча-латте|пилатес|растяжка|мокрые волосы под шапкой|бигуди под капюшоном`.split('|')},
   simple: {name: 'Просто слова', list: `кот|собака|дом|солнце|луна|звезда|дерево|машина|самолёт|корабль|велосипед|яблоко|банан|арбуз|торт|пицца|мороженое|чайник|телефон|телевизор|компьютер|очки|шляпа|зонт|ключ|замок|книга|карандаш|ножницы|часы|лампа|стул|кровать|окно|лестница|мост|гора|река|море|остров|облако|дождь|радуга|снеговик|ёлка|подарок|воздушный шарик|пират|робот|привидение|дракон|единорог|русалка|космонавт|ракета|динозавр|жираф|слон|крокодил|черепаха|улитка|паук|бабочка|пчела|акула|кит|пингвин|сова|змея|лягушка|ёжик|медведь|заяц|лиса|корова|свинья|курица|яйцо|сыр|хот-дог|бургер|гитара|барабан|микрофон|наушники|футбол|бассейн|палатка|костёр|маяк|вулкан|кактус|гриб|цветок|светофор|поезд|автобус|вертолёт|якорь|корона|меч|сердце|поцелуй|свадьба|будильник`.split('|')},
   rap: {name: 'Песни русского рэпа', list: [
     'Медуза|Matrang','Розовое вино|Элджей и Feduk','Sayonara детка|Элджей|сайонара детка',
@@ -264,17 +265,18 @@ function newGame(keepPlayers) {
   const players = keepPlayers && G ? G.players.map(p => ({...p, score: 0, guessed: false})) : [];
   const prev = G || {};
   G = {phase: 'lobby', players, drawer: null, drawerIdx: -1, word: null, endsAt: 0,
-       time: prev.time || 80, laps: prev.laps || 2, cats: prev.cats || ['girl', 'simple', 'rap'],
+       time: prev.time || 80, laps: prev.laps || 2, cats: prev.cats || ['girl', 'girlhard', 'simple', 'rap'],
        turn: 0, total: 0, used: new Set(), revealed: [], skips: 0, strokes: [], timer: null};
 }
 function hostStart() {
   isHost = true; code = rid(5); base = PREFIX + code + '/';
-  connectBroker(BROKERS.map((_, i) => i),
+  pickFastest(
     () => ({topic: base + 'all', payload: JSON.stringify({t: 'hostgone'}), qos: 0, retain: false}),
     () => {
-      mq.subscribe(base + 'h');
+      mq.subscribe([base + 'h', base + 'hp']);
       mq.on('message', (topic, buf) => {
         let d; try { d = JSON.parse(buf.toString()); } catch (e) { return; }
+        if (topic === base + 'hp') { if (d && typeof d.ts === 'number') showPing(Date.now() - d.ts); return; }
         if (!d || typeof d.from !== 'string' || d.from.length > 30 || d.from === 'host') return;
         seen.set(d.from, Date.now());
         hostMsg(d.from, d.m);
@@ -292,7 +294,56 @@ setInterval(() => {
   const now = Date.now();
   G.players.filter(p => p.id !== 'host' && now - (seen.get(p.id) || 0) > 20000).forEach(p => dropPlayer(p.id));
   broadcast();
+  pub(base + 'hp', {ts: now});
 }, 4000);
+/* хозяин: подключаемся ко всем серверам сразу, меряем скорость, оставляем самый быстрый */
+function pickFastest(willFor, onReady, onFail) {
+  status('Ищем самый быстрый сервер…');
+  const res = []; let done = false;
+  const clients = BROKERS.map((url, idx) => {
+    let c;
+    try { c = mqtt.connect(url, {clientId: 'kr_' + rid(10), clean: true, connectTimeout: 6000, reconnectPeriod: 2000, keepalive: 30, will: willFor(idx)}); }
+    catch (e) { return null; }
+    const tt = 'krokodil-ping/' + rid(10);
+    let measured = false;
+    c.on('error', () => {});
+    c.on('message', t => {
+      if (t !== tt || measured || done) return;
+      measured = true;
+      res.push({idx, c, rtt: performance.now() - c.__t0});
+      if (res.length === BROKERS.length) finish();
+    });
+    c.on('connect', () => {
+      if (done || measured) return;
+      c.subscribe(tt, () => { c.__t0 = performance.now(); c.publish(tt, '1'); });
+    });
+    return c;
+  });
+  const finish = () => {
+    if (done) return;
+    if (!res.length) { if (performance.now() - started < 9000) { setTimeout(finish, 500); return; } }
+    done = true;
+    if (!res.length) { clients.forEach(c => { try { c && c.end(true); } catch (e) {} }); onFail(); return; }
+    res.sort((a, b) => a.rtt - b.rtt);
+    const w = res[0];
+    clients.forEach(c => { if (c && c !== w.c) try { c.end(true); } catch (e) {} });
+    w.c.removeAllListeners('message');
+    w.c.on('reconnect', () => status('Связь прервалась, переподключаемся…'));
+    w.c.on('connect', () => status(''));
+    mq = w.c; srv = w.idx;
+    showPing(w.rtt);
+    onReady();
+  };
+  const started = performance.now();
+  setTimeout(finish, 3000);
+}
+let pingMs = null;
+function showPing(ms) {
+  pingMs = Math.round(ms);
+  const tag = $('#roomTag');
+  if (!code || !tag) return;
+  tag.textContent = 'Комната ' + code.toUpperCase() + ' · пинг ' + pingMs + ' мс';
+}
 const player = id => G.players.find(p => p.id === id);
 function addPlayer(id, nm) {
   const p = player(id);
@@ -400,7 +451,9 @@ setInterval(() => {
     G.revealed.push(free[Math.floor(Math.random() * free.length)]); changed = true;
   }
   if (l <= 0) { endTurn(); return; }
-  if (l !== lastLeft || changed) { lastLeft = l; broadcast(); }
+  if (changed) broadcast();
+  else if (l !== lastLeft) clientTimer(); // таймер у всех тикает сам, без лишних сообщений
+  lastLeft = l;
 }, 300);
 const okSeg = s => s && typeof s.id === 'string' && s.id.length < 48 && /^#[0-9a-f]{6}$/i.test(s.c) &&
   typeof s.w === 'number' && s.w > 0 && s.w <= 80 && Array.isArray(s.p) && s.p.length % 2 === 0 &&
@@ -409,7 +462,7 @@ const okSeg = s => s && typeof s.id === 'string' && s.id.length < 48 && /^#[0-9a
 function hostMsg(pid, d) {
   if (!d || typeof d !== 'object' || !G) return;
   const p = player(pid);
-  if (d.t === 'ping') return;
+  if (d.t === 'ping') { if (typeof d.ts === 'number') sendTo(pid, {t: 'pong', ts: d.ts}); return; }
   if (d.t === 'bye') { dropPlayer(pid); return; }
   if (d.t === 'join') {
     if (!p && G.players.length >= 16) { sendTo(pid, {t: 'full'}); return; }
@@ -446,7 +499,7 @@ function hostMsg(pid, d) {
       if (G.phase === 'draw') {
         if (pid === G.drawer) { sendTo(pid, {t: 'chat', k: 'sys', text: 'Пока рисуешь, писать в чат нельзя — вдруг подскажешь :)'}); return; }
         if (p.guessed) {
-          G.players.filter(q => q.guessed || q.id === G.drawer).forEach(q => sendTo(q.id, {t: 'chat', k: 'secret', name: p.name, text}));
+          G.players.filter(q => q.guessed || q.id === G.drawer).forEach(q => sendTo(q.id, {t: 'chat', k: 'secret', name: p.name, text, cid: d.cid}));
           return;
         }
         if (isCorrect(text, G.word)) {
@@ -459,11 +512,11 @@ function hostMsg(pid, d) {
           broadcast(); checkAll();
           return;
         }
-        toAll({t: 'chat', k: 'msg', name: p.name, text});
+        toAll({t: 'chat', k: 'msg', name: p.name, text, cid: d.cid});
         if (isClose(text, G.word)) sendTo(pid, {t: 'chat', k: 'close', text: 'Почти! Очень близко'});
         return;
       }
-      toAll({t: 'chat', k: 'msg', name: p.name, text});
+      toAll({t: 'chat', k: 'msg', name: p.name, text, cid: d.cid});
       break;
     }
   }
@@ -502,7 +555,7 @@ function guestStart(room) {
     () => { $('#go').disabled = false; status(''); $('#hmsg').textContent = 'Не удалось связаться с сервером игры. Проверь интернет или попробуй другую сеть.'; });
   setInterval(() => {
     if (!joined || (S && S.phase === 'gone')) return;
-    send({t: 'ping'});
+    send({t: 'ping', ts: Date.now()});
     if (Date.now() - lastHost > 20000) hostGone();
   }, 5000);
   window.addEventListener('pagehide', () => send({t: 'bye'}));
@@ -548,6 +601,16 @@ function addSeg(s, noDraw) {
 }
 
 let logN = 0;
+const myCids = new Set();
+function clientTimer() {
+  if (!S || S.phase !== 'draw') return;
+  const left = Math.max(0, S.left - Math.floor((Date.now() - (S.recvAt || Date.now())) / 1000));
+  const timer = $('#timer');
+  $('#tsec').textContent = left;
+  timer.style.setProperty('--p', Math.max(0, Math.min(1, left / S.time)));
+  timer.classList.toggle('low', left <= 10);
+}
+setInterval(clientTimer, 250);
 function addChat(m) {
   const d = document.createElement('div');
   const k = ['sys', 'ok', 'close', 'secret', 'msg'].includes(m.k) ? m.k : 'msg';
@@ -563,12 +626,15 @@ function addChat(m) {
 function clientMsg(m) {
   if (!m || typeof m !== 'object') return;
   switch (m.t) {
-    case 'state': S = m; me = m.you; render(); break;
+    case 'state': S = m; S.recvAt = Date.now(); me = m.you; render(); break;
+    case 'pong': if (typeof m.ts === 'number') showPing(Date.now() - m.ts); break;
     case 'seg': addSeg(m.s); break;
     case 'strokes': strokes.clear(); order = []; (Array.isArray(m.list) ? m.list : []).forEach(s => addSeg(s, true)); redraw(); break;
     case 'undo': strokes.delete(m.id); order = order.filter(x => x !== m.id); redraw(); break;
     case 'clear': strokes.clear(); order = []; redraw(); break;
-    case 'chat': addChat(m); break;
+    case 'chat':
+      if (m.cid && myCids.has(m.cid)) { myCids.delete(m.cid); return; } // своё уже показано сразу
+      addChat(m); break;
     case 'yay': { const st = $('#stage'); st.classList.remove('yay'); void st.offsetWidth; st.classList.add('yay'); break; }
   }
 }
@@ -608,11 +674,11 @@ function flush() {
 }
 function pushPt(e) {
   const r = cv.getBoundingClientRect();
-  const x = +((e.clientX - r.left) / r.width).toFixed(4), y = +((e.clientY - r.top) / r.height).toFixed(4);
+  const x = +((e.clientX - r.left) / r.width).toFixed(3), y = +((e.clientY - r.top) / r.height).toFixed(3);
   buf.push(x, y);
   addSeg({id: cur.id, c: cur.c, w: cur.w, p: [x, y]});
   if (buf.length >= 400) flush();
-  else if (!flushT) flushT = setTimeout(flush, 60);
+  else if (!flushT) flushT = setTimeout(flush, 90);
 }
 let drawingNow = false;
 cv.addEventListener('pointerdown', e => {
@@ -636,7 +702,13 @@ $('#gf').addEventListener('submit', e => {
   e.preventDefault();
   const t = $('#gi').value.trim();
   if (!t) return;
-  send({t: 'guess', text: t});
+  const cid = rid(8);
+  if (!(S && S.phase === 'draw' && S.drawer === me)) {
+    myCids.add(cid);
+    const mine = S && S.players.find(p => p.id === me);
+    addChat({k: 'msg', name: mine ? mine.name : myName, text: t});
+  }
+  send({t: 'guess', text: t.slice(0, 80), cid});
   $('#gi').value = '';
 });
 
@@ -644,6 +716,7 @@ $('#gf').addEventListener('submit', e => {
 function showGame() {
   $('#home').classList.add('hidden'); $('#game').classList.remove('hidden');
   $('#roomTag').textContent = 'Комната ' + code.toUpperCase();
+  if (pingMs != null) showPing(pingMs);
   renderTools(); setTimeout(fit, 0);
 }
 const inviteLink = () => location.origin + location.pathname + '?room=' + code + '&s=' + srv;
@@ -665,9 +738,7 @@ function render() {
     if (amDrawer) hint.innerHTML = `<small>Ты рисуешь · ${esc(S.cat)}</small><b>${esc(S.word || '')}</b>${S.artist ? `<small>${esc(S.artist)}</small>` : ''}`;
     else hint.innerHTML = `<small>${esc(pname(S.drawer))} рисует · ${esc(S.cat)}</small>${esc(S.hint)}`;
     timer.classList.remove('hidden');
-    $('#tsec').textContent = S.left;
-    timer.style.setProperty('--p', Math.max(0, Math.min(1, S.left / S.time)));
-    timer.classList.toggle('low', S.left <= 10);
+    clientTimer();
   } else {
     timer.classList.add('hidden');
     hint.innerHTML = ph === 'lobby' ? '<small>Лобби</small>Собираем команду' : ph === 'reveal' ? '<small>Раунд окончен</small>' + esc(S.word || '') : ph === 'over' ? '<small>Финал</small>Игра окончена' : '<small>Связь потеряна</small>';
